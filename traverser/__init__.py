@@ -106,8 +106,10 @@ class Link:
 
 
 class Traverser:
-    def __init__(self, url, log_file, headless=False, download_pdf=False):
+    def __init__(self, url, log_file, headless=True, download_pdf=False):
         self.playwright = sync_playwright().start()
+
+        print(f'Starting playwright in headless={headless}')
 
         # Overwrite to always open pdf externally.
         if download_pdf:
