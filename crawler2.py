@@ -4,9 +4,6 @@ from typing import Union
 import urllib.request
 import socket
 from urllib.error import *
-import time
-import requests
-import json
 
 import re
 from pathlib import Path
@@ -45,65 +42,19 @@ class Link:
     def is_pdf(self):
         return Path(urlparse(self.__url).path).suffix.lower() == '.pdf'
 
-    def clone(self, url):
-        c = Link(url, self.text)
-        return c
-
 
 DefaultTimeout = 10  # seconds
 
-"""
-const tmpDir = fs.mkdtempSync(`/tmp/pwtest`);
-fs.mkdirSync(`${tmpDir}/userdir/Default`, { recursive: true });
-
-const defaultPreferences = {
-  plugins: {
-    always_open_pdf_externally: true,
-  },
-}
-
-fs.writeFileSync(`${tmpDir}/userdir/Default/Preferences`, JSON.stringify(defaultPreferences));
-
-const context = await chromium.launchPersistentContext(`${basePath}/userdir`, { acceptDownloads: true });
-"""
-
 
 class Crawler:
-    def __init__(self, headless=False, download_pdf=False):
+    def __init__(self, headless=False):
         self.playwright = sync_playwright().start()
-
-        if download_pdf:
-            chromium_dir = Path('./chrome/userdir/Default')
-            chromium_dir.mkdir(parents=True, exist_ok=True)
-
-            prefs_file = chromium_dir / 'Preferences'
-            prefs_file.write_text(
-                json.dumps(
-                    {
-                        'plugins': {'always_open_pdf_externally': True},
-                    }
-                )
-            )
-            print('Setting preferences')
-            import pdb
-
-            pdb.set_trace()
-            prefs_file_str = str(prefs_file.absolute())
-            self.browser = self.playwright.chromium.launch(
-                args=[f'--initial-preferences-file={prefs_file_str}'], headless=headless
-            )
-        else:
-            self.browser = self.playwright.chromium.launch(headless=headless)
-
+        self.browser = self.playwright.chromium.launch(headless=headless)
         self.page = self.browser.new_page()
-        self.page.set_extra_http_headers(
-            {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-            }
-        )
         self.output_dir = None
         self.log_file = None
         self.urls_file = None
+        self.timeout_count = 0
         self.timeout_urls = []
 
     def __del__(self):
@@ -114,27 +65,39 @@ class Crawler:
         with open(self.log_file, "a") as log:
             log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
 
-    def start(self, url: str, output_dir: Path):
+    def load_crawled(self):
+        dirs = [d for d in output_dir.glob('*') if d.is_dir()]
+        dir_dates = [get_date_from_date_str(d.name) for d in dirs]
+        dir_dates = sorted(dir_dates, reverse=True)
+
+        urls = set()
+        for dir_date in dir_dates:
+            urls_file = dir_date / 'urls.yml'
+            if urls_file.exists():
+                url_infos = yaml.load(urls_file.read_text(), Loader=yaml.FullLoader)
+                urls.add(u['url'] for u in urls)
+        return urls
+
+    def start(self, url: str, output_dir: Path, crawl_dir: str):
         self.page.goto(url)
-        self.output_dir = output_dir
+        self.base_output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.crawled_urls = self.load_crawled()
+
+        self.output_dir = output_dir / crawl_dir
+
         self.log_file = self.output_dir / "log.txt"
         self.urls_file = self.output_dir / "urls.yml"
         self._write_log(f"Started crawling at {url}")
 
     def click(
-        self,
-        title: Optional[str] = None,
-        text: Optional[str] = None,
-        link_id: Optional[str] = None,
-        ignore_error=False,
+        self, title: Optional[str] = None, text: Optional[str] = None, link_id: Optional[str] = None
     ):
         if title:
             link = self.page.query_selector(f'a[title="{title}"]')
         elif text:
             link = self.page.query_selector(f'a >> text="{text}"')
-            if not link:
-                link = self.page.query_selector(f'text="{text}"')
         elif link_id:
             link = self.page.query_selector(f'#{link_id}')
         else:
@@ -143,11 +106,8 @@ class Crawler:
         if link:
             link.click()
             self._write_log(f"Clicked on link with title='{title}' and text='{text}'")
-            return True
-        elif not ignore_error:
-            raise Exception("Link not found")
         else:
-            return False
+            raise Exception("Link not found")
 
     def click_link(self, link, wait=0):
         self.page.click(f'a[href="{link.url}"]')
@@ -157,8 +117,7 @@ class Crawler:
         self.page.go_back(wait_until='networkidle')
 
     def set_form_element(self, form_id: str, value: str):
-        # element = self.page.query_selector(f'#{form_id}')
-        element = self.page.locator(f'#{form_id}')
+        element = self.page.query_selector(f'#{form_id}')
         print(f'Setting form element: {form_id}')
 
         if not element:
@@ -236,21 +195,16 @@ class Crawler:
 
         return [Link(link.get_attribute('href'), link.inner_text()) for link in links]
 
-    def get_tables(
+    def get_table_links(
         self,
         id_regex: Optional[str] = None,
         class_regex: Optional[str] = None,
         caption_regex: Optional[str] = None,
-    ):
-        def elim_none(v):
-            return v if v is not None else ''
-
+    ) -> List[Link]:
         if id_regex:
             id_pattern = re.compile(id_regex)
             tables = self.page.query_selector_all('table')
-            tables = [
-                table for table in tables if id_pattern.match(elim_none(table.get_attribute('id')))
-            ]
+            tables = [table for table in tables if id_pattern.match(table.get_attribute('id'))]
         elif class_regex:
             class_pattern = re.compile(class_regex)
             tables = self.page.query_selector_all('table')
@@ -273,16 +227,6 @@ class Crawler:
         else:
             tables = self.page.query_selector_all('table')
 
-        return tables
-
-    def get_table_links(
-        self,
-        id_regex: Optional[str] = None,
-        class_regex: Optional[str] = None,
-        caption_regex: Optional[str] = None,
-    ) -> List[Link]:
-        tables = self.get_tables(id_regex, class_regex, caption_regex)
-
         if len(tables) > 1:
             raise ValueError('Multiple tables found: {len(tables)} found.')
         elif len(tables) == 0:
@@ -294,94 +238,44 @@ class Crawler:
     def get_current_url(self) -> str:
         return self.page.url
 
-    #     def save_links(self, links: List[Link], wait_seconds=0, additional_cols={}):
-    #         def download_file(link):
-    #             file_path = self.output_dir / link.name
-    #             if file_path.exists():
-    #                 print('Already donwnloaded')
-    #                 return 501, file_path
+    def crawled_before(self, links):
+        return [l for l in links if l.url in self.crawled_urls]
 
-    #             try:
-    #                 response = urllib.request.urlopen(link.url, timeout=DefaultTimeout)
-    #             except (socket.timeout, urllib.error.URLError):
-    #                 print('Request Timedout')
-    #                 self.timeout_count += 1
-    #                 self.timeout_urls.append(link.url)
-    #                 return 408, None
-
-    #             if response.getcode() == 200:
-    #                 with open(file_path, 'wb') as f:
-    #                     f.write(response.read())
-    #                 print('File downloaded successfully')
-    #                 return response.getcode(), file_path
-    #             else:
-    #                 return response.getcode(), None
-
-    #         if self.timeout_count > 5:
-    #             urls_str = "\n".join(self.timeout_urls)
-    #             raise RuntimeError('Too many timeouts {urls_str}')
-
-    # p
-    #         # if not os.path.exists(self.urls_file):
-    #         #     with open(self.urls_file, 'w') as urls:
-    #         #         yaml.dump('', urls)
-
-    #         saved_links = []
-    #         for idx, link in enumerate(links):
-    #             response_code, file_path = download_file(link)
-    #             if response_code == 200:
-    #                 saved_link_info = {
-    #                     'url': link.url,
-    #                     'text': link.text.replace('\n', ' '),
-    #                     'download_time': datetime.now().isoformat(),
-    #                     'file_path': str(file_path),
-    #                     'crawl_dir': self.output_dir.name,
-    #                 }
-    #                 if additional_cols:
-    #                     for (field, vals) in additional_cols.items():
-    #                         saved_link_info[field] = vals[idx]
-
-    #                 saved_links.append(saved_link_info)
-    #             elif not file_path:
-    #                 print(f'Download Failed: {link.text} {response_code}')
-    #             self.wait(wait_seconds)
-
-    #         with open(self.urls_file, 'a') as urls:
-    #             yaml.dump(saved_links, urls)
-
-    def save_links(self, links: List[Link], wait_seconds=0, additional_cols={}):
-        def download_url(url: str, filename: Path, retries: int = 2, timeout: int = 10) -> bool:
-            try:
-                response = requests.get(url, timeout=timeout)
-                response.raise_for_status()
-                with open(filename, 'wb') as f:
-                    f.write(response.content)
-                print('File downloaded successfully')
-                return True
-            except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError):
-                if filename.exists():
-                    os.remove(filename)
-
-                if retries > 0:
-                    print(f'Retrying {url}')
-                    return download_url(url, filename, retries - 1, timeout)
-                else:
-                    print(f'Failed {url}')
-                    return False
-
-        if len(self.timeout_urls) > 5:
-            urls_str = "\n".join(self.timeout_urls)
-            raise RuntimeError(f'Too many timeouts {urls_str}')
-
-        saved_links = []
-        for idx, link in enumerate(links):
+    def save_links(self, links: List[Link], wait_seconds=0):
+        def download_file(link):
             file_path = self.output_dir / link.name
             if file_path.exists():
-                print('Already downloaded')
-                continue
+                print('Already donwnloaded')
+                return 501, file_path
 
-            success = download_url(link.url, file_path)
-            if success:
+            try:
+                response = urllib.request.urlopen(link.url, timeout=DefaultTimeout)
+            except (socket.timeout, urllib.error.URLError):
+                print('Request Timedout')
+                self.timeout_count += 1
+                self.timeout_urls.append(link.url)
+                return 408, None
+
+            if response.getcode() == 200:
+                with open(file_path, 'wb') as f:
+                    f.write(response.read())
+                print('File downloaded successfully')
+                return response.getcode(), file_path
+            else:
+                return response.getcode(), None
+
+        if self.timeout_count > 5:
+            urls_str = "\n".join(self.timeout_urls)
+            raise RuntimeError('Too many timeouts {urls_str}')
+
+        if not os.path.exists(self.urls_file):
+            with open(self.urls_file, 'w') as urls:
+                yaml.dump('', urls)
+
+        saved_links = []
+        for link in links:
+            response_code, file_path = download_file(link)
+            if response_code == 200:
                 saved_link_info = {
                     'url': link.url,
                     'text': link.text.replace('\n', ' '),
@@ -389,14 +283,9 @@ class Crawler:
                     'file_path': str(file_path),
                     'crawl_dir': self.output_dir.name,
                 }
-                if additional_cols:
-                    for field, vals in additional_cols.items():
-                        saved_link_info[field] = vals[idx]
-
                 saved_links.append(saved_link_info)
-            else:
-                self.timeout_urls.append(link.url)
-                print(f'Download Failed: {link.text}')
+            elif not file_path:
+                print(f'Download Failed: {link.text} {response_code}')
             self.wait(wait_seconds)
 
         with open(self.urls_file, 'a') as urls:
@@ -462,5 +351,4 @@ class Crawler:
         return len(elements) > 0
 
     def wait(self, seconds: int):
-        time.sleep(3)
         self.page.wait_for_timeout(seconds * 1000)

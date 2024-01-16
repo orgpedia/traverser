@@ -10,14 +10,16 @@ from crawler import Crawler, Link
 test_page_url = 'file://' + str(Path('sample2.html').resolve())
 output_dir = Path('test_output')
 
+
 @pytest.fixture(scope="module")
 def crawler():
     c = Crawler()
     c.start(test_page_url, output_dir)
     yield c
-    #c.browser.close()
+    # c.browser.close()
     if output_dir.exists():
         shutil.rmtree(output_dir)
+
 
 def test_start(crawler):
     assert crawler.page.url.strip('/') == test_page_url
@@ -25,7 +27,7 @@ def test_start(crawler):
 
 
 def test_click(crawler):
-    crawler.start(test_page_url, output_dir)    
+    crawler.start(test_page_url, output_dir)
     crawler.click(title='file1')
     assert re.search(r'example\.com/file1\.pdf$', crawler.get_current_url())
     crawler.page.goto(test_page_url)
@@ -35,34 +37,39 @@ def test_get_drop_downs(crawler):
     drop_downs = crawler.get_drop_downs(id='test-dropdown')
     print(drop_downs)
     assert drop_downs == [('option1', 'Option 1'), ('option2', 'Option 2')]
-    
+
 
 def test_save_screenshot(crawler):
     crawler.save_screenshot('test_screenshot')
     assert (output_dir / 'test_screenshot.png').exists()
 
+
 def test_get_text(crawler):
     text = crawler.get_text(id='paragraph')
     assert text == 'This is a sample paragraph.'
-    
+
 
 def test_save_html(crawler):
     crawler.save_html('test_html')
     assert (output_dir / 'test_html.html').exists()
 
+
 def test_get_links(crawler):
     links = crawler.get_links(url_regex=r'file\d\.pdf')
     assert len(links) == 3
 
+
 def test_output_go_down(crawler):
     crawler.output_go_down('subdir')
     assert (output_dir / 'subdir').exists()
-    crawler.output_go_up()    
+    crawler.output_go_up()
+
 
 def test_output_go_up(crawler):
     crawler.output_go_down('subdir')
     crawler.output_go_up()
     assert crawler.output_dir == output_dir
+
 
 @pytest.mark.skip("Need to download pdf from a page")
 def test_save_links(crawler):
@@ -70,26 +77,32 @@ def test_save_links(crawler):
     crawler.save_links(links)
     assert (output_dir / 'file1.pdf').exists()
 
+
 def test_write_links(crawler):
     links = [Link('https://example.com/file1.pdf', 'Download file 1')]
     crawler.write_links(links)
     assert (output_dir / 'urls.yml').exists()
+
 
 def test_set_form_element(crawler):
     crawler.set_form_element(id='test-dropdown', value='option2')
     selected_value = crawler.page.eval_on_selector("#test-dropdown", "el => el.value")
     assert selected_value == 'option2'
 
+
 def test_get_current_url(crawler):
     url = crawler.get_current_url()
     assert url == test_page_url
+
 
 def test_has_element(crawler):
     assert crawler.has_element(element_type='p', id_regex='paragraph')
     assert not crawler.has_element(element_type='a', id_regex=r'nonexistent')
 
+
 def test_wait(crawler):
     import time
+
     start_time = time.time()
     crawler.wait(2)
     elapsed_time = time.time() - start_time
@@ -100,7 +113,6 @@ def test_get_table_links(crawler):
     table_links = crawler.get_table_links(id_regex=r'test-table')
     assert len(table_links) == 1
     assert table_links[0].url == 'https://example.com/file3.pdf'
-
 
 
 """
@@ -143,4 +155,4 @@ HTML forms are an essential part of web applications and are used to collect use
 
 These form elements, when combined, can create powerful and interactive forms that collect various types of user input, enhance user experience, and facilitate communication between the client and server.
 
-"""                  
+"""

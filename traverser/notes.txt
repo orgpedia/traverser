@@ -1,0 +1,44 @@
+# Use cases for traverser
+
+This document contains how the traverser will be used to download
+documents from government 
+
+Need to think of not just the scenario of one-time download, but also
+repeated download to keep things in sync.
+
+
+Some sites have two sections current and archive, with the documents
+moved from current to archive. In this case these current section would
+be checked on a schedule while the archive won't be checked.
+
+## Cabsec
+
+### Current Download
+
+0. Create a run directory
+1. Visit URL 'https://cabsec.gov.in/councilofministers/councilofministers/'
+2. Save the page -> councilofministers.html
+3. Get PDF links from table(id="table")
+4. Check if pdf.page is already downloaded for the same category 'council of minsters'
+5. If pdf not found download it in the 'councilofministers' directory and update the URLs.json file, store category as
+   'councilofministers', date and order_number as blank.
+
+6. Visit URL 'https://cabsec.gov.in/councilofministers/changeinportfolios/'
+7. Save the page -> changeinportfolios
+8. Check if pdf.page is already downloaded for the same category 'changeofportfolio'
+9. If pdf not found download it in the 'changeofportfolio' directory and update the URLs.json file,
+   store category as 'councilofministers', date and order_number as blank.
+
+### Archive Download
+
+0. Create a run directory
+1. Visit URLs 'https://cabsec.gov.in/archived/88' -> InitialComposition,
+    'https://cabsec.gov.in/archived/5' -> 'changeofportfolio',
+    'https://cabsec.gov.in/archived/1' -> 'councilofministers'
+    save the page in Archive directory and create a directory for the same
+
+2. For each click on number of documents and store the year of the row.
+3. Store the details and update urls.json
+
+
+
