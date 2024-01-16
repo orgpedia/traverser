@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "traverserma"
+name = "traverser"
 version = "0.0.1"
 description = "A package to traverse the web and download some links"
 authors = ["Orgpedia Foundation <orgpedia.foundation@gmail.com>"]
